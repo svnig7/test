@@ -8,7 +8,7 @@
  *   - Secrets: BOT_TOKEN, WEBHOOK_SECRET, ADMIN_IDS
  */
 
-const DEFAULT_SETTINGS = { prefix: "", suffix: "", rules: [], forcesub: "" };
+const DEFAULT_SETTINGS = { prefix: "", suffix: "", rules: [], removes: [], forcesub: "" };
 
 // ---------- Telegram helpers ----------
 
@@ -52,7 +52,12 @@ function applyRules(text, entities, settings) {
   text = text || "";
   entities = entities ? entities.map((e) => ({ ...e })) : [];
 
-  for (const rule of settings.rules) {
+  const allRules = [
+    ...settings.rules,
+    ...settings.removes.map((find) => ({ find, replace: "" })),
+  ];
+
+  for (const rule of allRules) {
     const { find, replace } = rule;
     if (!find) continue;
     let searchFrom = 0;
@@ -152,6 +157,9 @@ async function handleCommand(env, message) {
         "/addreplace <find> => <replace>\n" +
         "/delreplace <index>\n" +
         "/listrules\n" +
+        "/addremove <text>\n" +
+        "/delremove <index>\n" +
+        "/listremove\n" +
         "/setforcesub <@channel>\n/delforcesub\n" +
         "/settings",
     });
@@ -224,6 +232,34 @@ async function handleCommand(env, message) {
       break;
     }
 
+    case "/addremove":
+      if (!arg) return tg(env, "sendMessage", { chat_id: chatId, text: "Usage: /addremove <text>" });
+      settings.removes.push(arg);
+      await saveSettings(env, settings);
+      await tg(env, "sendMessage", { chat_id: chatId, text: `Will now strip: "${arg}"` });
+      break;
+
+    case "/delremove": {
+      const idx = parseInt(arg, 10);
+      if (isNaN(idx) || idx < 1 || idx > settings.removes.length) {
+        return tg(env, "sendMessage", { chat_id: chatId, text: "Usage: /delremove <index> (see /listremove)" });
+      }
+      const removed = settings.removes.splice(idx - 1, 1)[0];
+      await saveSettings(env, settings);
+      await tg(env, "sendMessage", { chat_id: chatId, text: `Removed rule: "${removed}"` });
+      break;
+    }
+
+    case "/listremove": {
+      if (!settings.removes.length) {
+        await tg(env, "sendMessage", { chat_id: chatId, text: "No remove rules set." });
+        break;
+      }
+      const list = settings.removes.map((r, i) => `${i + 1}. "${r}"`).join("\n");
+      await tg(env, "sendMessage", { chat_id: chatId, text: list });
+      break;
+    }
+
     case "/setforcesub":
       if (!arg) return tg(env, "sendMessage", { chat_id: chatId, text: "Usage: /setforcesub <@channel>" });
       settings.forcesub = arg;
@@ -244,6 +280,7 @@ async function handleCommand(env, message) {
           `Prefix: ${settings.prefix || "—"}\n` +
           `Suffix: ${settings.suffix || "—"}\n` +
           `Rules: ${settings.rules.length}\n` +
+          `Remove rules: ${settings.removes.length}\n` +
           `Force-sub: ${settings.forcesub || "off"}`,
       });
       break;
@@ -258,7 +295,7 @@ async function handleCommand(env, message) {
 async function handleChannelPost(env, post) {
   if (post.caption === undefined) return; // media/text with no caption, nothing to rewrite
   const settings = await getSettings(env);
-  if (!settings.prefix && !settings.suffix && settings.rules.length === 0) return;
+  if (!settings.prefix && !settings.suffix && settings.rules.length === 0 && settings.removes.length === 0) return;
 
   const { text, entities } = applyRules(post.caption, post.caption_entities, settings);
   if (text === post.caption) return;
