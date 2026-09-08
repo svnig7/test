@@ -1,10 +1,10 @@
-name = "auto-caption-bot"
+name = "caption-bot"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
 [[kv_namespaces]]
 binding = "CAPTION_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "07bca5032a3e4c648f41647080ee90ed"
 
 # Set these with `wrangler secret put <NAME>` — do not put them here:
 #   BOT_TOKEN       — from @BotFather
