@@ -42,6 +42,9 @@ DM the bot (as an admin ID) with:
 | `/addreplace <find> => <replace>` | Add a find/replace rule |
 | `/delreplace <index>` | Remove rule by number (see `/listrules`) |
 | `/listrules` | Show all replace rules |
+| `/addremove <text>` | Strip a fixed piece of text entirely |
+| `/delremove <index>` | Remove a strip rule by number (see `/listremove`) |
+| `/listremove` | Show all strip rules |
 | `/setforcesub <@channel>` | Require users to join a channel before using the bot in DM |
 | `/delforcesub` | Disable force-sub |
 | `/settings` | Show current config |
