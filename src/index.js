@@ -9,7 +9,41 @@
  *   - Secrets: BOT_TOKEN, WEBHOOK_SECRET
  */
 
-const DEFAULT_SETTINGS = { prefix: "", suffix: "", rules: [], removes: [], forcesub: "" };
+const DEFAULT_SETTINGS = {
+  prefix: "",
+  suffix: "",
+  rules: [],
+  removes: [],
+  forcesub: "",
+  metaFormat: true, // style captions that already have the 📺 Title / 🆔 TMDB ID layout
+};
+
+function getFilename(post) {
+  return post.document?.file_name || post.video?.file_name || null;
+}
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Filename in <code>, metadata block in an expandable <blockquote>. */
+function formatMetaCaption(filename, metadata) {
+  return `<code>${escapeHTML(filename)}</code>\n\n<blockquote expandable>${escapeHTML(metadata)}</blockquote>`;
+}
+
+/** Plain find/replace + remove rules applied to raw text before HTML-escaping. */
+function applyTextRules(text, settings) {
+  for (const r of settings.rules) {
+    if (r.find) text = text.split(r.find).join(r.replace);
+  }
+  for (const r of settings.removes) {
+    if (r) text = text.split(r).join("");
+  }
+  return text;
+}
 
 // ---------- Telegram helpers ----------
 
@@ -156,6 +190,7 @@ async function handleCommand(env, message) {
         "/delremove <index>\n" +
         "/listremove\n" +
         "/setforcesub <@channel>\n/delforcesub\n" +
+        "/metaformat <on|off>\n" +
         "/settings",
     });
     return;
@@ -263,6 +298,18 @@ async function handleCommand(env, message) {
       await tg(env, "sendMessage", { chat_id: chatId, text: "Force-sub disabled." });
       break;
 
+    case "/metaformat":
+      if (!["on", "off"].includes(arg)) {
+        return tg(env, "sendMessage", { chat_id: chatId, text: "Usage: /metaformat <on|off>" });
+      }
+      settings.metaFormat = arg === "on";
+      await saveSettings(env, settings);
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: `Metadata formatting ${settings.metaFormat ? "enabled" : "disabled"}.`,
+      });
+      break;
+
     case "/settings":
       await tg(env, "sendMessage", {
         chat_id: chatId,
@@ -271,7 +318,8 @@ async function handleCommand(env, message) {
           `Suffix: ${settings.suffix || "—"}\n` +
           `Rules: ${settings.rules.length}\n` +
           `Remove rules: ${settings.removes.length}\n` +
-          `Force-sub: ${settings.forcesub || "off"}`,
+          `Force-sub: ${settings.forcesub || "off"}\n` +
+          `Meta format: ${settings.metaFormat ? "on" : "off"}`,
       });
       break;
 
@@ -283,8 +331,33 @@ async function handleCommand(env, message) {
 // ---------- Channel post handling ----------
 
 async function handleChannelPost(env, post) {
-  if (post.caption === undefined) return; // no caption, nothing to rewrite
   const settings = await getSettings(env);
+
+  if (settings.metaFormat && post.caption && post.caption.includes("📺 Title : ")) {
+    const filename = getFilename(post);
+    if (filename) {
+      const metadata = post.caption.slice(post.caption.indexOf("📺 Title : ")).trim();
+      const fname = applyTextRules(filename, settings);
+      const meta = applyTextRules(metadata, settings);
+      let body = formatMetaCaption(fname, meta);
+      if (settings.prefix) body = escapeHTML(settings.prefix) + "\n" + body;
+      if (settings.suffix) body = body + "\n" + escapeHTML(settings.suffix);
+
+      if (body !== post.caption) {
+        await tg(env, "editMessageCaption", {
+          chat_id: post.chat.id,
+          message_id: post.message_id,
+          caption: body,
+          parse_mode: "HTML",
+        });
+      }
+      return;
+    }
+  }
+
+  // General case: no metadata layout detected — prefix/suffix/rules on the
+  // caption as-is, preserving whatever entities it already has.
+  if (post.caption === undefined) return;
   if (!settings.prefix && !settings.suffix && settings.rules.length === 0 && settings.removes.length === 0) return;
 
   const { text, entities } = applyRules(post.caption, post.caption_entities, settings);
