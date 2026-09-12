@@ -1,11 +1,12 @@
 /**
  * Auto Caption Bot — Cloudflare Worker
- * Watches channel posts, rewrites captions (prefix/suffix + find-replace rules),
- * preserves entities (bold/links/expandable blockquote/etc), gated by force-sub.
+ * Watches channel posts, rewrites captions (prefix/suffix + find-replace/
+ * remove rules), preserving entities (bold/links/expandable blockquote/etc).
+ * Open to any user in private chat, gated by force-subscribe.
  *
  * Bindings required (wrangler.toml):
  *   - KV:      CAPTION_KV
- *   - Secrets: BOT_TOKEN, WEBHOOK_SECRET, ADMIN_IDS
+ *   - Secrets: BOT_TOKEN, WEBHOOK_SECRET
  */
 
 const DEFAULT_SETTINGS = { prefix: "", suffix: "", rules: [], removes: [], forcesub: "" };
@@ -19,14 +20,6 @@ async function tg(env, method, payload) {
     body: JSON.stringify(payload),
   });
   return res.json();
-}
-
-function adminIds(env) {
-  return (env.ADMIN_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
-}
-
-function isAdmin(env, userId) {
-  return adminIds(env).includes(String(userId));
 }
 
 // ---------- Settings (KV) ----------
@@ -43,8 +36,8 @@ async function saveSettings(env, settings) {
 // ---------- Caption rewriting (entity-safe) ----------
 
 /**
- * Applies find/replace rules then prefix/suffix to a caption, adjusting
- * caption_entities offsets so formatting (bold, links, expandable
+ * Applies find/replace and remove rules, then prefix/suffix, to a caption,
+ * adjusting caption_entities offsets so formatting (bold, links, expandable
  * blockquote, etc.) survives. Entities that overlap a replaced span are
  * dropped (can't be reliably preserved); everything else is shifted.
  */
@@ -121,7 +114,7 @@ async function sendForceSubPrompt(env, chatId) {
   });
 }
 
-// ---------- Command handling (private chat) ----------
+// ---------- Command handling (private chat, open to any user) ----------
 
 async function handleCommand(env, message) {
   const chatId = message.chat.id;
@@ -131,18 +124,20 @@ async function handleCommand(env, message) {
   const cmd = cmdRaw.split("@")[0];
   const arg = rest.join(" ").trim();
 
+  // Force-sub gate applies to every command, not just /start.
+  if (!(await isSubscribed(env, userId))) {
+    await sendForceSubPrompt(env, chatId);
+    return;
+  }
+
   if (cmd === "/start") {
-    if (!(await isSubscribed(env, userId))) {
-      await sendForceSubPrompt(env, chatId);
-      return;
-    }
     await tg(env, "sendMessage", {
       chat_id: chatId,
       text:
         "Auto Caption Bot is running.\n\n" +
         "Add me as admin (with edit-messages permission) to a channel and I'll " +
         "rewrite every new post's caption automatically.\n\n" +
-        "Send /help for admin commands.",
+        "Send /help for commands.",
     });
     return;
   }
@@ -151,7 +146,7 @@ async function handleCommand(env, message) {
     await tg(env, "sendMessage", {
       chat_id: chatId,
       text:
-        "Admin commands:\n" +
+        "Commands:\n" +
         "/setprefix <text>\n/delprefix\n" +
         "/setsuffix <text>\n/delsuffix\n" +
         "/addreplace <find> => <replace>\n" +
@@ -163,11 +158,6 @@ async function handleCommand(env, message) {
         "/setforcesub <@channel>\n/delforcesub\n" +
         "/settings",
     });
-    return;
-  }
-
-  if (!isAdmin(env, userId)) {
-    await tg(env, "sendMessage", { chat_id: chatId, text: "Admins only." });
     return;
   }
 
@@ -293,7 +283,7 @@ async function handleCommand(env, message) {
 // ---------- Channel post handling ----------
 
 async function handleChannelPost(env, post) {
-  if (post.caption === undefined) return; // media/text with no caption, nothing to rewrite
+  if (post.caption === undefined) return; // no caption, nothing to rewrite
   const settings = await getSettings(env);
   if (!settings.prefix && !settings.suffix && settings.rules.length === 0 && settings.removes.length === 0) return;
 
@@ -320,7 +310,7 @@ async function handleUpdate(env, update) {
     const ok = await isSubscribed(env, cq.from.id);
     await tg(env, "answerCallbackQuery", {
       callback_query_id: cq.id,
-      text: ok ? "You're in! Send /start again." : "Still not joined.",
+      text: ok ? "You're in! Send your command again." : "Still not joined.",
       show_alert: true,
     });
     return;
